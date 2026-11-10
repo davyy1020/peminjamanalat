@@ -1,0 +1,2306 @@
+// ==========================================
+// PECC EVENT RENTALS - NEOBRUTALISM ENGINE
+// Terhubung Langsung ke Google Spreadsheet & Drive
+// ==========================================
+
+// Global App State
+const state = {
+  view: 'catalog', // 'catalog' | 'checkout' | 'nota' | 'admin'
+  adminLoggedIn: false,
+  items: [],
+  loans: [],
+  cart: [],
+  
+  // Google Spreadsheet Backend URL (Apps Script Web App)
+  appsScriptUrl: localStorage.getItem('pecc_event_apps_script_url') || 'https://script.google.com/macros/s/AKfycbwoV2EhBfMwVnVlF7CHpjwoT7ggAhmryQb7dM4jyP3iKNHfOIs7P_Bv9fi4viQ7seNC/exec',
+  isSyncing: false,
+  isOnlineWithSheets: false,
+  
+  // Date Availability Checker
+  filterStartDate: getTodayStr(),
+  filterEndDate: getTomorrowStr(),
+  
+  // Filter & Search
+  selectedCategory: 'all',
+  searchQuery: '',
+  sortBy: 'recommend',
+  filterStockOnly: false,
+  
+  // Current Active Transaction
+  currentNota: null,
+  activeQuickViewItem: null,
+  activeScheduleItem: null,
+  
+  // Form checkout data
+  borrowerName: '',
+  borrowerNIM: '',
+  borrowerOrg: '',
+  borrowerPhone: '',
+  eventName: '',
+  proofImg: '',
+  proofName: '',
+};
+
+// ==========================================
+// DATE & FORMAT HELPERS
+// ==========================================
+function getTodayStr() {
+  const d = new Date();
+  return d.toISOString().slice(0, 10);
+}
+
+function getTomorrowStr() {
+  const d = new Date(Date.now() + 86400000);
+  return d.toISOString().slice(0, 10);
+}
+
+function diffDays(startDateStr, endDateStr) {
+  if (!startDateStr || !endDateStr) return 1;
+  const d1 = new Date(startDateStr);
+  const d2 = new Date(endDateStr);
+  const diffTime = d2 - d1;
+  const diff = Math.round(diffTime / 86400000);
+  return diff > 0 ? diff : 1;
+}
+
+function fmt(n) {
+  return 'Rp ' + Number(n || 0).toLocaleString('id-ID');
+}
+
+function fmtDate(dStr) {
+  if (!dStr) return '-';
+  const d = new Date(dStr);
+  return d.toLocaleDateString('id-ID', {
+    day: 'numeric',
+    month: 'short',
+    year: 'numeric'
+  });
+}
+
+function uid(prefix = 'PECC') {
+  const rand = Math.floor(1000 + Math.random() * 9000);
+  return `${prefix}-${Date.now().toString(36).slice(-4).toUpperCase()}${rand}`;
+}
+
+// ==========================================
+// STORAGE MANAGEMENT
+// ==========================================
+const S = k => {
+  try {
+    const v = localStorage.getItem('pecc_event_' + k);
+    return v ? JSON.parse(v) : null;
+  } catch (e) {
+    return null;
+  }
+};
+const W = (k, v) => {
+  try {
+    localStorage.setItem('pecc_event_' + k, JSON.stringify(v));
+  } catch (e) {}
+};
+
+function defaultCatalogItems() {
+  return [
+    {
+      id: 'itm-speaker',
+      name: 'Speaker Portable Bluetooth',
+      category: 'sound',
+      categoryLabel: 'Sound & Audio',
+      price: 30000,
+      stock: 4,
+      available: true,
+      image: 'images/speaker.jpg',
+      desc: 'Speaker portable aktif troli lengkap dengan roda, handle, suara bertenaga, bluetooth & kabel charger. Cocok untuk indoor maupun outdoor.',
+      tag: '🔥 TERLARIS',
+      tagColor: 'orange',
+      rating: 5.0,
+      reviews: 32
+    },
+    {
+      id: 'itm-mic',
+      name: 'Microphone Wireless Set (2 Mic)',
+      category: 'sound',
+      categoryLabel: 'Sound & Audio',
+      price: 20000,
+      stock: 6,
+      available: true,
+      image: 'images/mic.jpg',
+      desc: '1 set isi 2 mic wireless handheld + receiver UHF anti-storing frekuensi stabil jangkauan 30 meter. Include baterai & adapter.',
+      tag: 'POPULER',
+      tagColor: 'yellow',
+      rating: 4.9,
+      reviews: 48
+    },
+    {
+      id: 'itm-bendera-polines',
+      name: 'Bendera Polines Resmi',
+      category: 'atribut',
+      categoryLabel: 'Atribut Acara',
+      price: 2000,
+      stock: 10,
+      available: true,
+      image: 'images/bendera_polines.jpg',
+      desc: 'Bendera institusi Politeknik Negeri Semarang kain satin premium dengan lambang resmi Polines. Wajib untuk sidang, pelantikan & event formal.',
+      tag: 'WAJIB RESMI',
+      tagColor: 'yellow',
+      rating: 5.0,
+      reviews: 56
+    },
+    {
+      id: 'itm-bendera-mp',
+      name: 'Bendera Merah Putih',
+      category: 'atribut',
+      categoryLabel: 'Atribut Acara',
+      price: 2000,
+      stock: 10,
+      available: true,
+      image: 'images/bendera_mp.jpg',
+      desc: 'Bendera Merah Putih standar upacara resmi & panggung acara kampus. Bahan kain tebal tidak mudah kusut.',
+      tag: 'STANDARD',
+      tagColor: 'yellow',
+      rating: 4.9,
+      reviews: 30
+    },
+    {
+      id: 'itm-taplak',
+      name: 'Taplak Meja Artificial Elegan',
+      category: 'dekorasi',
+      categoryLabel: 'Dekorasi Meja',
+      price: 2000,
+      stock: 8,
+      available: true,
+      image: 'images/taplak.jpg',
+      desc: 'Taplak meja motif ornamen hijau floral/batik estetik. Sangat cocok untuk meja narasumber seminar, meja juri, atau registrasi.',
+      tag: 'ESTETIK',
+      tagColor: 'yellow',
+      rating: 4.8,
+      reviews: 21
+    },
+    {
+      id: 'itm-greenscreen',
+      name: 'Green Screen Mini Backdrop',
+      category: 'tech',
+      categoryLabel: 'Visual & Tech',
+      price: 5000,
+      stock: 5,
+      available: true,
+      image: 'images/greenscreen.jpg',
+      desc: 'Background kain green screen polos chroma key anti-pantulan cahaya. Sangat ideal untuk live streaming, webinar hybrid, atau video shooting.',
+      tag: 'LIVE STREAM',
+      tagColor: 'yellow',
+      rating: 4.7,
+      reviews: 18
+    },
+    {
+      id: 'itm-akrilik',
+      name: 'Akrilik Nama Meja (Stand Name)',
+      category: 'dekorasi',
+      categoryLabel: 'Dekorasi Meja',
+      price: 4000,
+      stock: 15,
+      available: true,
+      image: 'images/akrilik.jpg',
+      desc: 'Stand akrilik segitiga bening tebal untuk nama pemateri, juri, meja VIP, atau nomor peserta. Kokoh dan jernih.',
+      tag: 'VIP MEJA',
+      tagColor: 'yellow',
+      rating: 4.9,
+      reviews: 29
+    },
+    {
+      id: 'itm-webcam',
+      name: 'Web Cam HD 1080p USB',
+      category: 'tech',
+      categoryLabel: 'Visual & Tech',
+      price: 10000,
+      stock: 4,
+      available: true,
+      image: 'images/webcam.jpg',
+      desc: 'Webcam Full HD 1080p plug & play USB, autofocus dan mic internal jernih. Sangat cocok untuk hybrid meeting, Zoom, dan Google Meet.',
+      tag: 'HIGH QUALITY',
+      tagColor: 'orange',
+      rating: 4.9,
+      reviews: 35
+    },
+    {
+      id: 'itm-vas',
+      name: 'Vas Bunga Artificial Meja',
+      category: 'dekorasi',
+      categoryLabel: 'Dekorasi Meja',
+      price: 2000,
+      stock: 8,
+      available: true,
+      image: 'images/vas_bunga.jpg',
+      desc: 'Vas keramik putih berisi bunga artificial elegan. Menambah kesan rapi dan profesional untuk meja narasumber & MC acara.',
+      tag: 'DEKORASI',
+      tagColor: 'yellow',
+      rating: 4.9,
+      reviews: 25
+    }
+  ];
+}
+
+function initData() {
+  const savedItems = S('items');
+  state.items = savedItems && savedItems.length ? savedItems : defaultCatalogItems();
+  
+  const savedLoans = S('loans');
+  if (!savedLoans || !savedLoans.length) {
+    const today = getTodayStr();
+    const tmr = getTomorrowStr();
+    state.loans = [
+      {
+        id: 'PECC-DEMO-01',
+        borrowerName: 'BEM Polines',
+        borrowerNIM: '4.33.22.0.12',
+        borrowerOrg: 'BEM Kema Polines',
+        borrowerPhone: '081234567890',
+        eventName: 'Pelatihan Organisasi',
+        borrowDate: today,
+        returnDate: tmr,
+        days: 1,
+        totalPrice: 50000,
+        status: 'active',
+        items: [
+          { itemId: 'itm-speaker', name: 'Speaker Portable Bluetooth', qty: 1, price: 30000 },
+          { itemId: 'itm-mic', name: 'Microphone Wireless Set (2 Mic)', qty: 1, price: 20000 }
+        ],
+        createdAt: Date.now() - 3600000
+      }
+    ];
+    W('loans', state.loans);
+  } else {
+    state.loans = savedLoans;
+  }
+  
+  // Jika URL Google Apps Script sudah diset, sinkronkan data di background
+  if (state.appsScriptUrl) {
+    syncWithGoogleSheets(true);
+  }
+}
+
+function saveItems() { W('items', state.items); }
+function saveLoans() { W('loans', state.loans); }
+
+// ==========================================
+// GOOGLE SPREADSHEET SYNC ENGINE
+// ==========================================
+/**
+ * Menyinkronkan data peminjaman dari Google Spreadsheet
+ */
+async function syncWithGoogleSheets(isSilent = false) {
+  if (!state.appsScriptUrl) {
+    if (!isSilent) toast('Silakan masukkan URL Web App Google Apps Script terlebih dahulu!', 'error');
+    return;
+  }
+  
+  state.isSyncing = true;
+  if (!isSilent) toast('Menghubungi Google Spreadsheet...', 'info');
+  
+  try {
+    const sep = state.appsScriptUrl.includes('?') ? '&' : '?';
+    const targetUrl = `${state.appsScriptUrl}${sep}action=getAll&nocache=${Date.now()}`;
+    
+    const response = await fetch(targetUrl);
+    const data = await response.json();
+    
+    if (data && data.status === 'success') {
+      let syncedCount = 0;
+      
+      // Sinkronkan daftar peminjaman
+      if (Array.isArray(data.loans)) {
+        data.loans.forEach(sheetLoan => {
+          const idx = state.loans.findIndex(l => l.id === sheetLoan.id);
+          
+          // Pastikan items memiliki struktur array
+          if (!sheetLoan.items && sheetLoan.itemsSummary) {
+            sheetLoan.items = parseItemsSummary(sheetLoan.itemsSummary);
+          }
+          
+          if (idx !== -1) {
+            state.loans[idx] = { ...state.loans[idx], ...sheetLoan };
+          } else {
+            state.loans.unshift(sheetLoan);
+          }
+          syncedCount++;
+        });
+        saveLoans();
+      }
+      
+      // Sinkronkan master stok jika ada di Spreadsheet
+      if (Array.isArray(data.items) && data.items.length > 0) {
+        data.items.forEach(sheetItem => {
+          const it = state.items.find(i => i.id === sheetItem.id);
+          if (it) {
+            if (sheetItem.stock !== undefined) it.stock = sheetItem.stock;
+            if (sheetItem.price !== undefined) it.price = sheetItem.price;
+          }
+        });
+        saveItems();
+      }
+      
+      state.isOnlineWithSheets = true;
+      if (!isSilent) toast(`✅ Berhasil terhubung ke Google Spreadsheet! (${syncedCount} transaksi disinkronkan)`, 'success');
+      
+      refreshCatalogGrid();
+      if (state.view === 'admin') render();
+    } else {
+      if (!isSilent) toast('Gagal mengambil data Spreadsheet: ' + (data.message || 'Respons tidak valid'), 'error');
+    }
+  } catch (err) {
+    console.warn('Sync Google Sheets error:', err);
+    if (!isSilent) {
+      toast('Koneksi gagal. Pastikan deployment Web App diset ke "Who has access: Anyone"!', 'error');
+    }
+  } finally {
+    state.isSyncing = false;
+  }
+}
+
+/**
+ * Mengirim transaksi baru langsung ke Google Spreadsheet & Google Drive
+ */
+async function sendLoanToGoogleSheets(loanRecord) {
+  if (!state.appsScriptUrl) return;
+  
+  try {
+    // 1. Jika berjalan langsung di Google Apps Script HTML
+    if (typeof google !== 'undefined' && google.script && google.script.run) {
+      google.script.run
+        .withSuccessHandler(function(res) {
+          toast('☁️ Peminjaman tersimpan di Google Spreadsheet & Drive!', 'success');
+        })
+        .withFailureHandler(function(err) {
+          console.error('Error Google Script run:', err);
+        })
+        .processLoanSubmission(loanRecord);
+      return;
+    }
+    
+    // 2. Jika dipanggil dari web browser biasa via fetch POST (no-cors)
+    await fetch(state.appsScriptUrl, {
+      method: 'POST',
+      mode: 'no-cors',
+      headers: {
+        'Content-Type': 'text/plain'
+      },
+      body: JSON.stringify(loanRecord)
+    });
+    
+    toast('☁️ Data peminjaman otomatis dicatat ke Google Spreadsheet!', 'success');
+  } catch (err) {
+    console.error('Gagal mengirim ke Google Sheets:', err);
+  }
+}
+
+/**
+ * Helper untuk mem-parsing text rincian alat dari Spreadsheet menjadi array
+ */
+function parseItemsSummary(summaryStr) {
+  if (!summaryStr) return [];
+  const parts = summaryStr.split(',');
+  return parts.map(p => {
+    const trimmed = p.trim();
+    const match = trimmed.match(/^(.*?)\s*\(x(\d+)/i);
+    if (match) {
+      const name = match[1].trim();
+      const qty = parseInt(match[2], 10) || 1;
+      const matched = state.items.find(i => i.name.toLowerCase().includes(name.toLowerCase()));
+      return {
+        itemId: matched ? matched.id : ('itm-' + name.slice(0, 5).toLowerCase()),
+        name: name,
+        qty: qty,
+        price: matched ? matched.price : 10000
+      };
+    }
+    return { itemId: 'itm-custom', name: trimmed, qty: 1, price: 10000 };
+  });
+}
+
+// ==========================================
+// CORE AVAILABILITY & STOCK ENGINE
+// ==========================================
+function getAvailableStock(itemId, startDateStr, endDateStr) {
+  const item = state.items.find(i => i.id === itemId);
+  if (!item || !item.available) return 0;
+  
+  const sStart = startDateStr || state.filterStartDate;
+  const sEnd = endDateStr || state.filterEndDate;
+  
+  let bookedCount = 0;
+  state.loans.forEach(loan => {
+    if (loan.status !== 'active') return;
+    
+    const lStart = loan.borrowDate;
+    const lEnd = loan.returnDate;
+    
+    // Check overlap: (sStart <= lEnd) && (sEnd >= lStart)
+    const isOverlap = (sStart <= lEnd) && (sEnd >= lStart);
+    if (isOverlap) {
+      if (Array.isArray(loan.items)) {
+        const match = loan.items.find(it => it.itemId === itemId);
+        if (match) bookedCount += match.qty;
+      }
+    }
+  });
+  
+  const remaining = item.stock - bookedCount;
+  return Math.max(0, remaining);
+}
+
+function getItemBookings(itemId) {
+  const bookings = [];
+  state.loans.forEach(loan => {
+    if (loan.status !== 'active') return;
+    if (Array.isArray(loan.items)) {
+      const found = loan.items.find(i => i.itemId === itemId);
+      if (found) {
+        bookings.push({
+          loanId: loan.id,
+          borrower: loan.borrowerName,
+          event: loan.eventName || 'Acara Kampus',
+          start: loan.borrowDate,
+          end: loan.returnDate,
+          qty: found.qty
+        });
+      }
+    }
+  });
+  return bookings;
+}
+
+// ==========================================
+// TOAST NOTIFICATIONS
+// ==========================================
+function toast(msg, type = 'info') {
+  let c = document.getElementById('toasts');
+  if (!c) {
+    c = document.createElement('div');
+    c.id = 'toasts';
+    c.className = 'toast-container no-print';
+    document.body.appendChild(c);
+  }
+  const icons = { success: '✅', error: '❌', info: '⚡' };
+  const el = document.createElement('div');
+  el.className = `toast ${type}`;
+  el.innerHTML = `<span>${icons[type] || 'ℹ️'}</span> <span>${msg}</span>`;
+  c.appendChild(el);
+  setTimeout(() => {
+    el.style.opacity = '0';
+    setTimeout(() => el.remove(), 250);
+  }, 3500);
+}
+
+// ==========================================
+// RENDER ROUTER
+// ==========================================
+function render() {
+  const app = document.getElementById('app');
+  if (!app) return;
+  app.innerHTML = '';
+  
+  app.appendChild(renderTicker());
+  app.appendChild(renderNavbar());
+  
+  const container = document.createElement('main');
+  container.className = 'container';
+  
+  if (state.view === 'catalog') {
+    renderCatalogView(container);
+  } else if (state.view === 'checkout') {
+    renderCheckoutView(container);
+  } else if (state.view === 'nota') {
+    renderNotaView(container);
+  } else if (state.view === 'admin') {
+    renderAdminView(container);
+  }
+  
+  app.appendChild(container);
+  
+  if (state.view === 'catalog' && state.cart.length > 0) {
+    app.appendChild(renderFloatingCartBar());
+  }
+}
+
+// ==========================================
+// COMPONENT: TICKER BAR
+// ==========================================
+function renderTicker() {
+  const el = document.createElement('div');
+  el.className = 'ticker-bar no-print';
+  el.innerHTML = `
+    <div class="ticker-content">
+      <span>📢 RESMI: Sistem Peminjaman Alat Event PECC Politeknik Negeri Semarang</span>
+      <span>⚡ CEK STOK REAL-TIME: Masukkan tanggal acara untuk cek sisa alat</span>
+      <span>📊 TERHUBUNG KE GOOGLE SPREADSHEET: Data otomatis tersimpan rapi</span>
+      <span>💳 PEMBAYARAN MUDAH: QRIS & Konfirmasi 1-Klik ke WhatsApp Admin</span>
+      <span>⭐ 100% Alat Terawat, Bersih & Siap Pakai Untuk Acara Anda!</span>
+    </div>
+  `;
+  return el;
+}
+
+// ==========================================
+// COMPONENT: NAVBAR
+// ==========================================
+function renderNavbar() {
+  const nav = document.createElement('header');
+  nav.className = 'navbar no-print';
+  
+  const totalCartUnits = state.cart.reduce((s, c) => s + c.qty, 0);
+  const sheetsStatusPill = state.appsScriptUrl ? `
+    <button class="nav-btn" style="background:#dcfce7;color:#15803d;font-size:.72rem;padding:.4rem .7rem" onclick="switchView('admin');toast('Kelola koneksi Google Spreadsheet di dashboard admin!','info')" title="Google Spreadsheet Terhubung">
+      🟢 Sheets Aktif
+    </button>
+  ` : `
+    <button class="nav-btn" style="background:#fef3c7;color:#b45309;font-size:.72rem;padding:.4rem .7rem" onclick="switchView('admin');toast('Klik menu Admin untuk hubungkan Google Spreadsheet!','info')" title="Klik untuk hubungkan Google Spreadsheet">
+      ⚠️ Mode Lokal
+    </button>
+  `;
+  
+  nav.innerHTML = `
+    <div class="navbar-inner">
+      <div class="nav-brand" onclick="switchView('catalog')">
+        <div class="nav-logos">
+          <div class="nav-logo-box" title="PECC Logo">
+            <img src="pecc_logo.jpg" alt="PECC" onerror="this.src='images/polines_logo.jpg'"/>
+          </div>
+          <div class="nav-logo-box" title="Polines Logo">
+            <img src="images/polines_logo.jpg" alt="Polines"/>
+          </div>
+        </div>
+        <div class="nav-brand-text">
+          <h1>PECC Rentals</h1>
+          <p>Peminjaman Alat Event</p>
+        </div>
+      </div>
+      
+      <div class="nav-search-wrap">
+        <span class="nav-search-icon">🔍</span>
+        <input 
+          type="text" 
+          class="nav-search-input" 
+          id="global-search" 
+          placeholder="Cari speaker, mic, bendera, webcam..." 
+          value="${state.searchQuery}"
+          oninput="handleSearch(this.value)"
+        />
+      </div>
+      
+      <div class="nav-actions">
+        ${sheetsStatusPill}
+        
+        <button class="nav-btn primary" onclick="openCartModal()">
+          🛒 Keranjang
+          <span class="cart-badge-count" id="cart-counter">${totalCartUnits}</span>
+        </button>
+        
+        <button class="nav-btn admin-toggle" onclick="toggleAdminView()">
+          ${state.view === 'admin' ? '🏪 Katalog' : '⚙️ Admin'}
+        </button>
+      </div>
+    </div>
+  `;
+  return nav;
+}
+
+function handleSearch(val) {
+  state.searchQuery = val.trim().toLowerCase();
+  refreshCatalogGrid();
+}
+
+function switchView(v) {
+  state.view = v;
+  window.scrollTo({ top: 0, behavior: 'smooth' });
+  render();
+}
+
+function toggleAdminView() {
+  if (state.view === 'admin') {
+    switchView('catalog');
+  } else {
+    switchView('admin');
+  }
+}
+
+// ==========================================
+// VIEW: CATALOG (Shopee Style + Cek Tanggal)
+// ==========================================
+function renderCatalogView(container) {
+  // 1. Header Banner Kop Surat Form
+  const headerCard = document.createElement('div');
+  headerCard.className = 'form-header-card';
+  headerCard.innerHTML = `
+    <div class="header-top-tag">FORM RESMI INVENTARIS PECC</div>
+    <div class="header-logos">
+      <div class="header-logo-box"><img src="pecc_logo.jpg" alt="PECC Logo"/></div>
+      <div class="header-logo-box"><img src="images/polines_logo.jpg" alt="Polines Logo"/></div>
+    </div>
+    <h1>PEMINJAMAN ALAT EVENT</h1>
+    <p class="subtitle">
+      Daftar peralatan resmi PECC Politeknik Negeri Semarang untuk kegiatan organisasi, seminar, perlombaan, upacara, dan event kampus.
+    </p>
+    <div class="form-header-badges">
+      <span class="badge-pill yellow">⚡ Tarif Sewa Terjangkau</span>
+      <span class="badge-pill green">🟢 Cek Ketersediaan Real-Time</span>
+      <span class="badge-pill blue">📊 Terintegrasi Google Spreadsheet</span>
+    </div>
+  `;
+  container.appendChild(headerCard);
+  
+  // 2. Date Availability Checker Form (FITUR UTAMA)
+  const durationDays = diffDays(state.filterStartDate, state.filterEndDate);
+  const checkerCard = document.createElement('div');
+  checkerCard.className = 'availability-checker-card';
+  checkerCard.innerHTML = `
+    <div class="checker-tag">📅 1. CEK KETERSEDIAAN JADWAL EVENT ANDA</div>
+    <div class="checker-grid">
+      <div class="form-field">
+        <label>Tanggal Mulai Pinjam <span style="color:var(--shopee-orange)">*</span></label>
+        <input 
+          type="date" 
+          id="date-start" 
+          value="${state.filterStartDate}" 
+          min="${getTodayStr()}"
+          onchange="updateDateFilter(this.value, null)"
+        />
+      </div>
+      <div class="form-field">
+        <label>Tanggal Selesai/Kembali <span style="color:var(--shopee-orange)">*</span></label>
+        <input 
+          type="date" 
+          id="date-end" 
+          value="${state.filterEndDate}" 
+          min="${state.filterStartDate}"
+          onchange="updateDateFilter(null, this.value)"
+        />
+      </div>
+      <button class="btn-checker" onclick="applyDateFilter()">
+        ⚡ Perbarui Stok Jadwal
+      </button>
+      <button class="btn btn-secondary" onclick="resetTodayFilter()" title="Kembali ke hari ini">
+        🔄 Hari Ini
+      </button>
+    </div>
+    <div class="checker-result-notice">
+      <span>
+        🗓️ Jadwal Terpilih: <strong>${fmtDate(state.filterStartDate)} s/d ${fmtDate(state.filterEndDate)}</strong> 
+        (${durationDays} Hari Sewa)
+      </span>
+      <span style="color:#15803d">
+        ✅ Stok di bawah otomatis disinkronkan dengan peminjaman pada rentang tanggal ini.
+      </span>
+    </div>
+  `;
+  container.appendChild(checkerCard);
+  
+  // 3. Category Chips & Sort Controls
+  const filterWrap = document.createElement('div');
+  filterWrap.className = 'filter-tabs-wrap';
+  
+  const categories = [
+    { id: 'all', label: '🏷️ Semua Alat' },
+    { id: 'sound', label: '🔊 Sound & Audio' },
+    { id: 'tech', label: '🖥️ Visual & Tech' },
+    { id: 'atribut', label: '🚩 Atribut Acara' },
+    { id: 'dekorasi', label: '🌸 Dekorasi Meja' }
+  ];
+  
+  const chipsHtml = categories.map(cat => `
+    <button 
+      class="chip-btn ${state.selectedCategory === cat.id ? 'active' : ''}" 
+      onclick="setCategory('${cat.id}')"
+    >
+      ${cat.label}
+    </button>
+  `).join('');
+  
+  filterWrap.innerHTML = `
+    <div class="category-chips">${chipsHtml}</div>
+    <div class="sort-wrap">
+      <span>Urutkan:</span>
+      <select class="sort-select" onchange="setSort(this.value)">
+        <option value="recommend" ${state.sortBy === 'recommend' ? 'selected' : ''}>⭐ Rekomendasi</option>
+        <option value="price-asc" ${state.sortBy === 'price-asc' ? 'selected' : ''}>💵 Termurah</option>
+        <option value="price-desc" ${state.sortBy === 'price-desc' ? 'selected' : ''}>💎 Termahal</option>
+        <option value="stock-desc" ${state.sortBy === 'stock-desc' ? 'selected' : ''}>📦 Stok Terbanyak</option>
+      </select>
+    </div>
+  `;
+  container.appendChild(filterWrap);
+  
+  // 4. Products Grid Container
+  const grid = document.createElement('div');
+  grid.className = 'products-grid';
+  grid.id = 'products-grid';
+  container.appendChild(grid);
+  
+  renderProductCards(grid);
+}
+
+function updateDateFilter(newStart, newEnd) {
+  if (newStart) state.filterStartDate = newStart;
+  if (newEnd) state.filterEndDate = newEnd;
+  
+  if (state.filterEndDate < state.filterStartDate) {
+    state.filterEndDate = state.filterStartDate;
+  }
+  
+  const endInput = document.getElementById('date-end');
+  if (endInput) {
+    endInput.min = state.filterStartDate;
+    endInput.value = state.filterEndDate;
+  }
+  
+  validateCartStock();
+  refreshCatalogGrid();
+}
+
+function applyDateFilter() {
+  toast(`Jadwal ketersediaan diperbarui untuk ${fmtDate(state.filterStartDate)} s/d ${fmtDate(state.filterEndDate)}!`, 'success');
+  refreshCatalogGrid();
+}
+
+function resetTodayFilter() {
+  state.filterStartDate = getTodayStr();
+  state.filterEndDate = getTomorrowStr();
+  render();
+  toast('Jadwal dikembalikan ke hari ini.', 'info');
+}
+
+function setCategory(catId) {
+  state.selectedCategory = catId;
+  render();
+}
+
+function setSort(sortVal) {
+  state.sortBy = sortVal;
+  refreshCatalogGrid();
+}
+
+function validateCartStock() {
+  let changed = false;
+  state.cart.forEach(c => {
+    const avail = getAvailableStock(c.itemId, state.filterStartDate, state.filterEndDate);
+    if (c.qty > avail) {
+      c.qty = Math.max(0, avail);
+      changed = true;
+    }
+  });
+  if (changed) {
+    state.cart = state.cart.filter(c => c.qty > 0);
+    toast('Jumlah di keranjang disesuaikan dengan stok tersedia pada tanggal baru!', 'info');
+  }
+}
+
+function updateCartUI() {
+  const totalUnits = state.cart.reduce((s, c) => s + c.qty, 0);
+  
+  // 1. Update badge angka di navbar
+  const counter = document.getElementById('cart-counter');
+  if (counter) {
+    counter.textContent = totalUnits;
+  }
+  
+  // 2. Update / pasang floating bar di bagian bawah
+  const existingBar = document.getElementById('float-cart-bar');
+  if (existingBar) existingBar.remove();
+  
+  if (state.view === 'catalog' && state.cart.length > 0) {
+    const app = document.getElementById('app');
+    if (app) {
+      app.appendChild(renderFloatingCartBar());
+    }
+  }
+}
+
+function refreshCatalogGrid() {
+  const grid = document.getElementById('products-grid');
+  if (grid) renderProductCards(grid);
+  updateCartUI();
+}
+
+// ==========================================
+// RENDER PRODUCT CARDS
+// ==========================================
+function renderProductCards(gridEl) {
+  let list = [...state.items];
+  
+  if (state.selectedCategory !== 'all') {
+    list = list.filter(i => i.category === state.selectedCategory);
+  }
+  
+  if (state.searchQuery) {
+    list = list.filter(i => 
+      i.name.toLowerCase().includes(state.searchQuery) ||
+      (i.desc && i.desc.toLowerCase().includes(state.searchQuery))
+    );
+  }
+  
+  if (state.sortBy === 'price-asc') {
+    list.sort((a, b) => a.price - b.price);
+  } else if (state.sortBy === 'price-desc') {
+    list.sort((a, b) => b.price - a.price);
+  } else if (state.sortBy === 'stock-desc') {
+    list.sort((a, b) => {
+      const aStock = getAvailableStock(a.id, state.filterStartDate, state.filterEndDate);
+      const bStock = getAvailableStock(b.id, state.filterStartDate, state.filterEndDate);
+      return bStock - aStock;
+    });
+  }
+  
+  if (list.length === 0) {
+    gridEl.innerHTML = `
+      <div class="empty-state-box">
+        <div class="icon">🔍</div>
+        <h3>Alat Tidak Ditemukan</h3>
+        <p>Tidak ada alat yang sesuai dengan pencarian atau filter yang dipilih.</p>
+        <button class="btn btn-primary" onclick="resetFilters()">Reset Filter Pencarian</button>
+      </div>
+    `;
+    return;
+  }
+  
+  gridEl.innerHTML = list.map(item => {
+    const availStock = getAvailableStock(item.id, state.filterStartDate, state.filterEndDate);
+    const inCart = state.cart.find(c => c.itemId === item.id);
+    const cartQty = inCart ? inCart.qty : 0;
+    
+    let stockBanner = '';
+    let isOutOfStock = false;
+    
+    if (availStock <= 0) {
+      isOutOfStock = true;
+      stockBanner = `
+        <div class="product-stock-banner empty">
+          <span>🔴 Habis di Tanggal Ini</span>
+          <span>0/${item.stock} Unit</span>
+        </div>
+      `;
+    } else if (availStock <= 2) {
+      stockBanner = `
+        <div class="product-stock-banner limited">
+          <span>⚠️ Sisa ${availStock} Unit (Terbatas!)</span>
+          <span>${availStock}/${item.stock} Unit</span>
+        </div>
+      `;
+    } else {
+      stockBanner = `
+        <div class="product-stock-banner available">
+          <span>🟢 Tersedia</span>
+          <span>Sisa ${availStock}/${item.stock} Unit</span>
+        </div>
+      `;
+    }
+    
+    const tagHtml = item.tag ? `
+      <div class="tag-badge-top ${item.tagColor === 'yellow' ? 'yellow' : ''}">${item.tag}</div>
+    ` : '';
+    
+    return `
+      <div class="product-card ${isOutOfStock ? 'out-of-stock' : ''}">
+        <div class="product-img-box" onclick="openProductQuickView('${item.id}')">
+          ${tagHtml}
+          <img src="${item.image || 'pecc_logo.jpg'}" alt="${item.name}" onerror="this.src='pecc_logo.jpg'"/>
+          <button class="btn-quick-view" title="Lihat detail">👁️ Detail</button>
+        </div>
+        
+        <div class="product-body">
+          <div class="product-category-text">${item.categoryLabel || 'Alat Event'}</div>
+          <h3 class="product-title" title="${item.name}" onclick="openProductQuickView('${item.id}')" style="cursor:pointer">
+            ${item.name}
+          </h3>
+          
+          <div class="product-price-row">
+            <span class="price-currency">${fmt(item.price)}</span>
+            <span class="price-unit">/ hari</span>
+          </div>
+          
+          ${stockBanner}
+          
+          <div class="product-actions">
+            ${isOutOfStock ? `
+              <button class="btn-add-cart" disabled>
+                ❌ Penuh
+              </button>
+            ` : (inCart ? `
+              <button class="btn-add-cart" style="background:var(--shopee-orange)" onclick="openCartModal()">
+                ✅ Masuk (${cartQty})
+              </button>
+            ` : `
+              <button class="btn-add-cart" onclick="addToCart('${item.id}')">
+                🛒 + Keranjang
+              </button>
+            `)}
+            <button class="btn-detail-item" onclick="openScheduleModal('${item.id}')" title="Cek jadwal booking alat ini">
+              📅
+            </button>
+          </div>
+        </div>
+      </div>
+    `;
+  }).join('');
+}
+
+function resetFilters() {
+  state.searchQuery = '';
+  state.selectedCategory = 'all';
+  const searchInput = document.getElementById('global-search');
+  if (searchInput) searchInput.value = '';
+  render();
+}
+
+// ==========================================
+// CART OPERATIONS
+// ==========================================
+function addToCart(itemId) {
+  const item = state.items.find(i => i.id === itemId);
+  if (!item) return;
+  
+  const avail = getAvailableStock(itemId, state.filterStartDate, state.filterEndDate);
+  if (avail <= 0) {
+    toast(`Maaf, ${item.name} habis untuk tanggal yang dipilih!`, 'error');
+    return;
+  }
+  
+  const existing = state.cart.find(c => c.itemId === itemId);
+  if (existing) {
+    if (existing.qty < avail) {
+      existing.qty += 1;
+      toast(`Jumlah ${item.name} ditambah (${existing.qty})`, 'success');
+    } else {
+      toast(`Maksimal hanya tersedia ${avail} unit di tanggal ini!`, 'error');
+    }
+  } else {
+    state.cart.push({
+      itemId: item.id,
+      name: item.name,
+      price: item.price,
+      image: item.image,
+      qty: 1
+    });
+    toast(`+ ${item.name} masuk keranjang!`, 'success');
+  }
+  
+  refreshCatalogGrid();
+}
+
+function changeCartQty(itemId, delta) {
+  const item = state.items.find(i => i.id === itemId);
+  const cartItem = state.cart.find(c => c.itemId === itemId);
+  if (!cartItem) return;
+  
+  const avail = getAvailableStock(itemId, state.filterStartDate, state.filterEndDate);
+  const newQty = cartItem.qty + delta;
+  
+  if (newQty <= 0) {
+    removeFromCart(itemId);
+    return;
+  }
+  
+  if (newQty > avail) {
+    toast(`Maksimal ${avail} unit tersedia untuk tanggal yang dipilih!`, 'error');
+    return;
+  }
+  
+  cartItem.qty = newQty;
+  renderCartModalContent();
+  refreshCatalogGrid();
+}
+
+function removeFromCart(itemId) {
+  state.cart = state.cart.filter(c => c.itemId !== itemId);
+  toast('Item dihapus dari keranjang.', 'info');
+  renderCartModalContent();
+  refreshCatalogGrid();
+}
+
+// ==========================================
+// COMPONENT: STICKY FLOATING CART BAR (Shopee)
+// ==========================================
+function renderFloatingCartBar() {
+  const existing = document.getElementById('float-cart-bar');
+  if (existing) existing.remove();
+  
+  const bar = document.createElement('div');
+  bar.id = 'float-cart-bar';
+  bar.className = 'shopee-float-bar no-print';
+  
+  const totalUnits = state.cart.reduce((s, c) => s + c.qty, 0);
+  const totalDayPrice = state.cart.reduce((s, c) => s + (c.price * c.qty), 0);
+  const days = diffDays(state.filterStartDate, state.filterEndDate);
+  const grandTotal = totalDayPrice * days;
+  
+  bar.innerHTML = `
+    <div class="float-bar-inner">
+      <div class="float-bar-left">
+        <div class="float-cart-icon-btn" onclick="openCartModal()">
+          🛒
+          <span class="float-cart-count-badge">${totalUnits}</span>
+        </div>
+        <div class="float-bar-summary">
+          <h4>${totalUnits} Alat Terpilih di Keranjang</h4>
+          <p>Sewa ${days} Hari (${fmtDate(state.filterStartDate)} - ${fmtDate(state.filterEndDate)})</p>
+        </div>
+      </div>
+      
+      <div class="float-bar-right">
+        <div class="float-total-box">
+          <div class="float-total-label">Estimasi Total (${days} Hari)</div>
+          <div class="float-total-amount">${fmt(grandTotal)}</div>
+        </div>
+        <button class="btn-checkout-float" onclick="goToCheckout()">
+          ⚡ Checkout Sekarang →
+        </button>
+      </div>
+    </div>
+  `;
+  return bar;
+}
+
+// ==========================================
+// MODAL: CART DRAWER / MODAL
+// ==========================================
+function openCartModal() {
+  let modal = document.getElementById('cart-modal');
+  if (!modal) {
+    modal = document.createElement('div');
+    modal.className = 'modal-overlay';
+    modal.id = 'cart-modal';
+    document.body.appendChild(modal);
+  }
+  
+  modal.onclick = e => {
+    if (e.target === modal) closeCartModal();
+  };
+  
+  renderCartModalContent();
+}
+
+function closeCartModal() {
+  const m = document.getElementById('cart-modal');
+  if (m) m.remove();
+}
+
+function renderCartModalContent() {
+  const modal = document.getElementById('cart-modal');
+  if (!modal) return;
+  
+  if (state.cart.length === 0) {
+    modal.innerHTML = `
+      <div class="modal-container">
+        <div class="modal-header">
+          <h3>🛒 Keranjang Peminjaman</h3>
+          <button class="modal-close-btn" onclick="closeCartModal()">✕</button>
+        </div>
+        <div class="modal-body" style="text-align:center;padding:3rem 1.5rem">
+          <div style="font-size:3.5rem;margin-bottom:1rem">🛒</div>
+          <h3 style="font-family:'Space Grotesk',sans-serif;font-size:1.3rem;font-weight:900;margin-bottom:.5rem">Keranjang Masih Kosong</h3>
+          <p style="color:var(--gray-600);font-weight:700;margin-bottom:1.5rem">Silakan pilih alat dari katalog peminjaman untuk memulai.</p>
+          <button class="btn btn-primary" onclick="closeCartModal()">Lihat Katalog Alat →</button>
+        </div>
+      </div>
+    `;
+    return;
+  }
+  
+  const days = diffDays(state.filterStartDate, state.filterEndDate);
+  const totalDayPrice = state.cart.reduce((s, c) => s + (c.price * c.qty), 0);
+  const grandTotal = totalDayPrice * days;
+  
+  const rows = state.cart.map(c => `
+    <tr>
+      <td>
+        <div class="cart-item-info">
+          <img src="${c.image || 'pecc_logo.jpg'}" class="cart-item-thumb" alt="${c.name}"/>
+          <div>
+            <div class="cart-item-name">${c.name}</div>
+            <div class="cart-item-unit-price">${fmt(c.price)} / hari</div>
+          </div>
+        </div>
+      </td>
+      <td>
+        <div class="qty-stepper">
+          <button class="qty-btn" onclick="changeCartQty('${c.itemId}', -1)">−</button>
+          <span class="qty-val">${c.qty}</span>
+          <button class="qty-btn" onclick="changeCartQty('${c.itemId}', 1)">+</button>
+        </div>
+      </td>
+      <td style="font-weight:900;color:var(--shopee-orange)">
+        ${fmt(c.price * c.qty)}/hr
+      </td>
+      <td>
+        <button class="btn-delete-cart" onclick="removeFromCart('${c.itemId}')" title="Hapus">🗑️</button>
+      </td>
+    </tr>
+  `).join('');
+  
+  modal.innerHTML = `
+    <div class="modal-container large">
+      <div class="modal-header">
+        <h3>🛒 Keranjang Peminjaman (${state.cart.length} Jenis Alat)</h3>
+        <button class="modal-close-btn" onclick="closeCartModal()">✕</button>
+      </div>
+      
+      <div class="modal-body">
+        <div style="background:#eff6ff;border:2px dashed var(--pecc-blue);border-radius:6px;padding:.75rem 1rem;margin-bottom:1rem;display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:.5rem;font-size:.85rem;font-weight:800">
+          <span>📅 Jadwal Sewa: <strong>${fmtDate(state.filterStartDate)} s/d ${fmtDate(state.filterEndDate)}</strong></span>
+          <span style="color:var(--pecc-blue)">Durasi: <strong>${days} Hari</strong></span>
+        </div>
+        
+        <div style="overflow-x:auto">
+          <table class="cart-items-table">
+            <thead>
+              <tr>
+                <th>Alat</th>
+                <th>Jumlah</th>
+                <th>Subtotal/Hari</th>
+                <th>Aksi</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${rows}
+            </tbody>
+          </table>
+        </div>
+        
+        <div style="margin-top:1.5rem;background:var(--gray-50);border:2px solid var(--black);border-radius:6px;padding:1rem">
+          <div style="display:flex;justify-content:space-between;font-weight:700;font-size:.88rem;margin-bottom:.4rem">
+            <span>Total Tarif per Hari:</span>
+            <span>${fmt(totalDayPrice)}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;font-weight:700;font-size:.88rem;margin-bottom:.4rem">
+            <span>Durasi Kegiatan:</span>
+            <span>${days} Hari</span>
+          </div>
+          <div style="border-top:2px dashed var(--black);padding-top:.75rem;margin-top:.5rem;display:flex;justify-content:space-between;align-items:center">
+            <span style="font-family:'Space Grotesk',sans-serif;font-size:1.05rem;font-weight:900;text-transform:uppercase">
+              Total Biaya Sewa:
+            </span>
+            <span style="font-family:'Space Grotesk',sans-serif;font-size:1.45rem;font-weight:900;color:var(--shopee-orange)">
+              ${fmt(grandTotal)}
+            </span>
+          </div>
+        </div>
+      </div>
+      
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="closeCartModal()">← Tambah Alat Lain</button>
+        <button class="btn btn-orange" onclick="goToCheckout()">⚡ Lanjut ke Form Peminjaman →</button>
+      </div>
+    </div>
+  `;
+}
+
+function goToCheckout() {
+  closeCartModal();
+  switchView('checkout');
+}
+
+// ==========================================
+// MODAL: QUICK VIEW DETAIL
+// ==========================================
+function openProductQuickView(itemId) {
+  const item = state.items.find(i => i.id === itemId);
+  if (!item) return;
+  
+  const avail = getAvailableStock(itemId, state.filterStartDate, state.filterEndDate);
+  
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'quick-view-modal';
+  overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+  
+  overlay.innerHTML = `
+    <div class="modal-container large">
+      <div class="modal-header">
+        <h3>🔍 Detail Peralatan Event</h3>
+        <button class="modal-close-btn" onclick="this.closest('.modal-overlay').remove()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="detail-grid">
+          <div>
+            <div class="detail-photo-box">
+              <img src="${item.image || 'pecc_logo.jpg'}" alt="${item.name}" onerror="this.src='pecc_logo.jpg'"/>
+            </div>
+            <div style="margin-top:.75rem;text-align:center">
+              <span class="badge-pill yellow">${item.tag || 'PECC INVENTORY'}</span>
+            </div>
+          </div>
+          <div class="detail-info-box">
+            <span style="font-size:.78rem;font-weight:800;color:var(--pecc-blue);text-transform:uppercase">${item.categoryLabel || 'Alat'}</span>
+            <h2>${item.name}</h2>
+            <div class="detail-price-tag">${fmt(item.price)} <span style="font-size:.85rem;color:var(--gray-600)">/ hari</span></div>
+            
+            <table class="detail-specs-table">
+              <tr>
+                <td class="label">Total Unit Milik:</td>
+                <td class="val">${item.stock} Unit</td>
+              </tr>
+              <tr>
+                <td class="label">Sisa di Jadwal Ini:</td>
+                <td class="val" style="font-weight:900;color:${avail>0?'#15803d':'#b91c1c'}">
+                  ${avail > 0 ? `🟢 ${avail} Unit Siap Dipinjam` : `🔴 0 Unit (Penuh Terbooking)`}
+                </td>
+              </tr>
+              <tr>
+                <td class="label">Periode Pengecekan:</td>
+                <td class="val">${fmtDate(state.filterStartDate)} s/d ${fmtDate(state.filterEndDate)}</td>
+              </tr>
+            </table>
+            
+            <div style="font-size:.88rem;font-weight:700;color:var(--gray-600);line-height:1.6;margin-bottom:1.25rem">
+              ${item.desc || 'Peralatan resmi PECC untuk menunjang kelancaran kegiatan mahasiswa dan kampus.'}
+            </div>
+            
+            <div style="display:flex;gap:.75rem;flex-wrap:wrap">
+              ${avail > 0 ? `
+                <button class="btn btn-primary" style="flex:1" onclick="addToCart('${item.id}');document.getElementById('quick-view-modal').remove()">
+                  🛒 Masukkan ke Keranjang
+                </button>
+              ` : `
+                <button class="btn" style="flex:1;background:var(--gray-200);cursor:not-allowed" disabled>
+                  ❌ Tidak Tersedia di Jadwal Ini
+                </button>
+              `}
+              <button class="btn btn-secondary" onclick="openScheduleModal('${item.id}');document.getElementById('quick-view-modal').remove()">
+                📅 Cek Kalender Booking
+              </button>
+            </div>
+          </div>
+        </div>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+}
+
+// ==========================================
+// MODAL: SCHEDULE & BOOKING LIST
+// ==========================================
+function openScheduleModal(itemId) {
+  const item = state.items.find(i => i.id === itemId);
+  if (!item) return;
+  
+  const bookings = getItemBookings(itemId);
+  
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'schedule-modal';
+  overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+  
+  const bookingRows = bookings.length > 0 ? bookings.map(b => `
+    <tr>
+      <td><strong>${fmtDate(b.start)} s/d ${fmtDate(b.end)}</strong></td>
+      <td>${b.borrower}</td>
+      <td>${b.event}</td>
+      <td><span class="badge-pill yellow">${b.qty} Unit</span></td>
+    </tr>
+  `).join('') : `
+    <tr>
+      <td colspan="4" style="text-align:center;padding:1.5rem;color:var(--gray-600)">
+        🎉 Belum ada jadwal peminjaman aktif untuk alat ini. Stok ${item.stock} unit penuh tersedia!
+      </td>
+    </tr>
+  `;
+  
+  overlay.innerHTML = `
+    <div class="modal-container">
+      <div class="modal-header">
+        <h3>📅 Jadwal Booking: ${item.name}</h3>
+        <button class="modal-close-btn" onclick="this.closest('.modal-overlay').remove()">✕</button>
+      </div>
+      <div class="modal-body">
+        <p style="font-size:.85rem;font-weight:700;margin-bottom:1rem">
+          Berikut adalah daftar tanggal saat <strong>${item.name}</strong> sedang dipinjam oleh peminjam lain:
+        </p>
+        <div style="overflow-x:auto">
+          <table class="cart-items-table">
+            <thead>
+              <tr>
+                <th>Rentang Tanggal</th>
+                <th>Peminjam</th>
+                <th>Acara</th>
+                <th>Jumlah</th>
+              </tr>
+            </thead>
+            <tbody>
+              ${bookingRows}
+            </tbody>
+          </table>
+        </div>
+        <div style="margin-top:1rem;background:#eff6ff;padding:.75rem;border-radius:6px;border:2px dashed var(--pecc-blue);font-size:.82rem;font-weight:700">
+          💡 Anda dapat memilih tanggal di luar rentang jadwal di atas untuk menjamin ketersediaan alat.
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Tutup</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+}
+
+// ==========================================
+// VIEW: CHECKOUT FORM
+// ==========================================
+function renderCheckoutView(container) {
+  if (state.cart.length === 0) {
+    switchView('catalog');
+    return;
+  }
+  
+  const days = diffDays(state.filterStartDate, state.filterEndDate);
+  const totalDayPrice = state.cart.reduce((s, c) => s + (c.price * c.qty), 0);
+  const grandTotal = totalDayPrice * days;
+  
+  const headerCard = document.createElement('div');
+  headerCard.className = 'form-header-card';
+  headerCard.innerHTML = `
+    <div class="header-top-tag">LANGKAH 2: FORMULIR PEMINJAMAN RESMI</div>
+    <h1>FORMULIR PEMINJAMAN ALAT</h1>
+    <p class="subtitle">Data peminjaman ini akan dicatat ke sistem dan Google Spreadsheet resmi PECC.</p>
+  `;
+  container.appendChild(headerCard);
+  
+  const formWrap = document.createElement('div');
+  formWrap.innerHTML = `
+    <!-- SECTION 1: DATA PEMINJAM -->
+    <div class="form-section">
+      <div class="section-tag">BAGIAN 1: IDENTITAS PEMINJAM & ACARA</div>
+      <div class="form-grid-2">
+        <div class="form-group">
+          <label class="form-label">Nama Lengkap Penanggung Jawab <span class="req">*</span></label>
+          <input 
+            type="text" 
+            class="form-input" 
+            id="inp-name" 
+            placeholder="Contoh: Muhammad Davy" 
+            value="${state.borrowerName}"
+          />
+        </div>
+        <div class="form-group">
+          <label class="form-label">NIM / NIK / No. Identitas <span class="req">*</span></label>
+          <input 
+            type="text" 
+            class="form-input" 
+            id="inp-nim" 
+            placeholder="Contoh: 3.33.22.0.15" 
+            value="${state.borrowerNIM}"
+          />
+        </div>
+      </div>
+      <div class="form-grid-2">
+        <div class="form-group">
+          <label class="form-label">Jurusan / Ormawa / Divisi / Instansi <span class="req">*</span></label>
+          <input 
+            type="text" 
+            class="form-input" 
+            id="inp-org" 
+            placeholder="Contoh: Teknik Elektro / PECC / BEM" 
+            value="${state.borrowerOrg}"
+          />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Nomor WhatsApp Aktif <span class="req">*</span></label>
+          <input 
+            type="tel" 
+            class="form-input" 
+            id="inp-phone" 
+            placeholder="Contoh: 088215444940" 
+            value="${state.borrowerPhone}"
+          />
+        </div>
+      </div>
+      <div class="form-group">
+        <label class="form-label">Nama Kegiatan / Event Acara <span class="req">*</span></label>
+        <input 
+          type="text" 
+          class="form-input" 
+          id="inp-event" 
+          placeholder="Contoh: Seminar Nasional PECC English Fair 2026" 
+          value="${state.eventName}"
+        />
+      </div>
+    </div>
+    
+    <!-- SECTION 2: JADWAL & RINCIAN SEWA -->
+    <div class="form-section">
+      <div class="section-tag">BAGIAN 2: JADWAL & ALAT YANG DIPINJAM</div>
+      <div class="form-grid-2">
+        <div class="form-group">
+          <label class="form-label">Tanggal Ambil / Mulai Pinjam</label>
+          <input 
+            type="date" 
+            class="form-input" 
+            id="checkout-start" 
+            value="${state.filterStartDate}" 
+            min="${getTodayStr()}"
+            onchange="handleCheckoutDateChange(this.value, null)"
+          />
+        </div>
+        <div class="form-group">
+          <label class="form-label">Tanggal Pengembalian</label>
+          <input 
+            type="date" 
+            class="form-input" 
+            id="checkout-end" 
+            value="${state.filterEndDate}" 
+            min="${state.filterStartDate}"
+            onchange="handleCheckoutDateChange(null, this.value)"
+          />
+        </div>
+      </div>
+      
+      <div style="margin-top:1rem">
+        <label class="form-label">Daftar Alat di Keranjang:</label>
+        <div style="background:var(--gray-50);border:2px solid var(--black);border-radius:6px;padding:.85rem">
+          ${state.cart.map(c => `
+            <div style="display:flex;justify-content:space-between;align-items:center;padding:.4rem 0;border-bottom:1px solid var(--gray-200);font-size:.88rem">
+              <div style="font-weight:800">
+                ${c.name} <span class="badge-pill yellow" style="padding:.1rem .4rem;font-size:.7rem">x${c.qty} unit</span>
+              </div>
+              <div style="font-weight:900">${fmt(c.price * c.qty)}/hr</div>
+            </div>
+          `).join('')}
+          <div style="margin-top:.75rem;display:flex;justify-content:space-between;align-items:center;font-weight:900">
+            <span>Total Tarif per Hari:</span>
+            <span>${fmt(totalDayPrice)}</span>
+          </div>
+          <div style="display:flex;justify-content:space-between;align-items:center;font-weight:900;color:var(--pecc-blue)">
+            <span>Durasi:</span>
+            <span>${days} Hari (${fmtDate(state.filterStartDate)} - ${fmtDate(state.filterEndDate)})</span>
+          </div>
+          <div style="border-top:2px dashed var(--black);padding-top:.5rem;margin-top:.5rem;display:flex;justify-content:space-between;align-items:center">
+            <span style="font-family:'Space Grotesk',sans-serif;font-size:1.1rem;font-weight:900">TOTAL PEMBAYARAN:</span>
+            <span style="font-family:'Space Grotesk',sans-serif;font-size:1.45rem;font-weight:900;color:var(--shopee-orange)">${fmt(grandTotal)}</span>
+          </div>
+        </div>
+      </div>
+    </div>
+    
+    <!-- SECTION 3: PEMBAYARAN QRIS & UPLOAD BUKTI -->
+    <div class="form-section">
+      <div class="section-tag">BAGIAN 3: PEMBAYARAN VIA QRIS</div>
+      <div class="qris-card-wrap">
+        <div class="qris-box" onclick="zoomQris('qris.png')" title="Klik untuk perbesar QRIS">
+          <img src="qris.png" alt="Scan QRIS PECC" onerror="this.src='pecc_logo.jpg'"/>
+          <p>🔍 Klik untuk Memperbesar QRIS</p>
+        </div>
+        
+        <div style="flex:1;min-width:240px">
+          <div class="badge-pill yellow" style="margin-bottom:.75rem">💳 Scan & Bayar Tepat Nominal</div>
+          <div style="font-size:1.25rem;font-weight:900;font-family:'Space Grotesk',sans-serif;color:var(--shopee-orange);margin-bottom:.5rem">
+            Nominal Transfer: ${fmt(grandTotal)}
+          </div>
+          <ol style="padding-left:1.2rem;font-size:.85rem;font-weight:700;color:var(--gray-600);line-height:1.8">
+            <li>Buka m-Banking (BCA, Mandiri, BRI, BNI) atau e-Wallet (Gopay, OVO, ShopeePay, DANA).</li>
+            <li>Scan kode QRIS di samping.</li>
+            <li>Pastikan nama merchant: <strong>PECC POLINES</strong>.</li>
+            <li>Masukkan nominal <strong>${fmt(grandTotal)}</strong> lalu bayar.</li>
+            <li>Simpan bukti transfer dan unggah di kotak bawah ini.</li>
+          </ol>
+        </div>
+      </div>
+      
+      <div style="margin-top:1.5rem">
+        <label class="form-label">Unggah Bukti Transfer / Pembayaran <span class="req">*</span></label>
+        <div 
+          class="upload-dropzone ${state.proofImg ? 'has-file' : ''}" 
+          id="dropzone" 
+          onclick="document.getElementById('proof-file-inp').click()"
+        >
+          <input 
+            type="file" 
+            id="proof-file-inp" 
+            accept="image/*,application/pdf" 
+            style="display:none" 
+            onchange="handleProofUpload(event)"
+          />
+          <div style="font-size:2.2rem;margin-bottom:.4rem">📎</div>
+          <div style="font-family:'Space Grotesk',sans-serif;font-weight:800;font-size:1rem" id="dropzone-text">
+            ${state.proofName ? '✅ File Terpilih: ' + state.proofName : 'Klik di sini untuk Unggah Bukti Pembayaran'}
+          </div>
+          <div style="font-size:.78rem;font-weight:700;color:var(--gray-600);margin-top:.3rem">
+            Format file: JPG, PNG, atau PDF (Maksimal 5MB)
+          </div>
+        </div>
+        
+        <div class="preview-img-box" id="proof-preview-box" style="display:${state.proofImg ? 'block' : 'none'}">
+          <img id="proof-preview-img" src="${state.proofImg || ''}" alt="Preview Bukti"/>
+        </div>
+      </div>
+    </div>
+    
+    <!-- SUBMIT ACTIONS -->
+    <div style="display:flex;justify-content:space-between;gap:1rem;flex-wrap:wrap;margin-bottom:2rem">
+      <button class="btn btn-secondary" onclick="switchView('catalog')">
+        ← Kembali ke Katalog
+      </button>
+      <button class="btn btn-orange" style="font-size:1rem;padding:.85rem 2rem" onclick="submitLoanForm()">
+        ✅ Submit Peminjaman & Simpan ke Spreadsheet →
+      </button>
+    </div>
+  `;
+  container.appendChild(formWrap);
+}
+
+function handleCheckoutDateChange(start, end) {
+  if (start) state.filterStartDate = start;
+  if (end) state.filterEndDate = end;
+  
+  if (state.filterEndDate < state.filterStartDate) {
+    state.filterEndDate = state.filterStartDate;
+  }
+  
+  validateCartStock();
+  render();
+}
+
+function handleProofUpload(e) {
+  const file = e.target.files[0];
+  if (!file) return;
+  
+  state.proofName = file.name;
+  
+  if (file.type.startsWith('image/')) {
+    const reader = new FileReader();
+    reader.onload = ev => {
+      state.proofImg = ev.target.result;
+      const prevBox = document.getElementById('proof-preview-box');
+      const prevImg = document.getElementById('proof-preview-img');
+      const dzText = document.getElementById('dropzone-text');
+      const dz = document.getElementById('dropzone');
+      if (prevBox && prevImg) {
+        prevBox.style.display = 'block';
+        prevImg.src = ev.target.result;
+      }
+      if (dzText) dzText.textContent = '✅ File Terpilih: ' + file.name;
+      if (dz) dz.classList.add('has-file');
+    };
+    reader.readAsDataURL(file);
+  } else {
+    state.proofImg = 'PDF_DOCUMENT';
+    const dzText = document.getElementById('dropzone-text');
+    if (dzText) dzText.textContent = '✅ File Dokumen PDF: ' + file.name;
+  }
+  toast('Bukti transfer berhasil dipilih!', 'success');
+}
+
+function zoomQris(src) {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+  overlay.innerHTML = `
+    <div class="modal-container" style="max-width:420px;text-align:center">
+      <div class="modal-header">
+        <h3>📱 Scan QRIS PECC</h3>
+        <button class="modal-close-btn" onclick="this.closest('.modal-overlay').remove()">✕</button>
+      </div>
+      <div class="modal-body" style="padding:1.5rem">
+        <img src="${src}" alt="QRIS" style="width:100%;border:3px solid var(--black);border-radius:6px;box-shadow:4px 4px 0 var(--black)"/>
+        <p style="font-weight:800;font-size:.85rem;margin-top:.85rem;color:var(--gray-600)">
+          Scan QRIS menggunakan mobile banking atau e-wallet Anda.
+        </p>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" style="width:100%" onclick="this.closest('.modal-overlay').remove()">Tutup</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+}
+
+async function submitLoanForm() {
+  const name = document.getElementById('inp-name')?.value.trim();
+  const nim = document.getElementById('inp-nim')?.value.trim();
+  const org = document.getElementById('inp-org')?.value.trim();
+  const phone = document.getElementById('inp-phone')?.value.trim();
+  const event = document.getElementById('inp-event')?.value.trim();
+  
+  if (!name || !nim || !org || !phone || !event) {
+    toast('Harap lengkapi semua data identitas peminjam!', 'error');
+    return;
+  }
+  
+  if (!state.proofImg) {
+    toast('Harap unggah bukti pembayaran transfer/QRIS!', 'error');
+    return;
+  }
+  
+  for (const c of state.cart) {
+    const avail = getAvailableStock(c.itemId, state.filterStartDate, state.filterEndDate);
+    if (c.qty > avail) {
+      toast(`Maaf, stok ${c.name} tidak cukup (${avail} unit tersedia)!`, 'error');
+      return;
+    }
+  }
+  
+  const days = diffDays(state.filterStartDate, state.filterEndDate);
+  const totalDayPrice = state.cart.reduce((s, c) => s + (c.price * c.qty), 0);
+  const grandTotal = totalDayPrice * days;
+  
+  const loanRecord = {
+    id: uid('NOTA'),
+    borrowerName: name,
+    borrowerNIM: nim,
+    borrowerOrg: org,
+    borrowerPhone: phone,
+    eventName: event,
+    borrowDate: state.filterStartDate,
+    returnDate: state.filterEndDate,
+    days: days,
+    totalPrice: grandTotal,
+    status: 'active',
+    items: state.cart.map(c => ({
+      itemId: c.itemId,
+      name: c.name,
+      qty: c.qty,
+      price: c.price
+    })),
+    proof: state.proofImg,
+    proofName: state.proofName,
+    createdAt: Date.now()
+  };
+  
+  // 1. Simpan di cache lokal
+  state.loans.unshift(loanRecord);
+  saveLoans();
+  
+  // 2. Kirim langsung ke Google Spreadsheet & Drive
+  sendLoanToGoogleSheets(loanRecord);
+  
+  state.currentNota = loanRecord;
+  state.cart = [];
+  state.proofImg = '';
+  state.proofName = '';
+  
+  toast('Peminjaman berhasil diproses!', 'success');
+  switchView('nota');
+}
+
+// ==========================================
+// VIEW: NOTA / INVOICE RESMI
+// ==========================================
+function renderNotaView(container) {
+  const loan = state.currentNota;
+  if (!loan) {
+    switchView('catalog');
+    return;
+  }
+  
+  const itemLines = loan.items.map(i => `• ${i.name} (x${i.qty}) = ${fmt(i.price * i.qty)}/hari`).join('%0A');
+  const waText = `Halo Admin PECC Inventory,%0A%0ASaya ingin mengonfirmasi peminjaman alat event:%0A*No. Nota:* %23${loan.id}%0A*Peminjam:* ${encodeURIComponent(loan.borrowerName)} (${encodeURIComponent(loan.borrowerNIM)})%0A*Instansi/Divisi:* ${encodeURIComponent(loan.borrowerOrg)}%0A*Kegiatan:* ${encodeURIComponent(loan.eventName)}%0A*Jadwal:* ${loan.borrowDate} s/d ${loan.returnDate} (${loan.days} Hari)%0A%0A*Rincian Alat:*%0A${itemLines}%0A%0A*Total Biaya:* ${fmt(loan.totalPrice)}%0A*Bukti Pembayaran:* Terlampir di sistem & Google Drive.%0A%0AMohon diverifikasi dan disiapkan alatnya. Terima kasih!`;
+  
+  const wrap = document.createElement('div');
+  wrap.innerHTML = `
+    <!-- SUCCESS BANNER -->
+    <div style="background:#dcfce7;border:3px solid var(--black);border-radius:8px;box-shadow:var(--shadow-main);padding:1.5rem;text-align:center;margin-bottom:1.5rem">
+      <div style="font-size:3rem;margin-bottom:.4rem">🎉</div>
+      <h2 style="font-family:'Space Grotesk',sans-serif;font-size:1.6rem;font-weight:900;text-transform:uppercase;color:#15803d">
+        Peminjaman Berhasil Diajukan!
+      </h2>
+      <p style="font-weight:700;font-size:.95rem;color:#166534">
+        Nota resmi telah dibuat dan tercatat ke Google Spreadsheet. Silakan konfirmasi ke Admin via WhatsApp di bawah.
+      </p>
+    </div>
+    
+    <!-- WA CONFIRMATION BUTTONS -->
+    <div class="form-section no-print" style="background:#eff6ff">
+      <div class="section-tag" style="background:#22c55e">📱 KONFIRMASI WHATSAPP ADMIN</div>
+      <p style="font-size:.88rem;font-weight:700;margin-bottom:.85rem">
+        Klik salah satu nomor admin di bawah ini untuk mengirim pesan konfirmasi otomatis:
+      </p>
+      <div style="display:flex;gap:.75rem;flex-wrap:wrap">
+        <a 
+          href="https://wa.me/6289515337550?text=${waText}" 
+          target="_blank" 
+          class="btn btn-green" 
+          style="flex:1;min-width:220px"
+        >
+          💬 Konfirmasi ke Admin Dito (0895-1533-7550)
+        </a>
+        <a 
+          href="https://wa.me/6288215444940?text=${waText}" 
+          target="_blank" 
+          class="btn btn-green" 
+          style="flex:1;min-width:220px"
+        >
+          💬 Konfirmasi ke Admin Davy (0882-1544-4940)
+        </a>
+      </div>
+    </div>
+    
+    <!-- ACTION BUTTONS -->
+    <div style="display:flex;justify-content:center;gap:.75rem;flex-wrap:wrap;margin-bottom:1.5rem" class="no-print">
+      <button class="btn btn-primary" onclick="window.print()">
+        📄 Cetak / Download PDF Nota
+      </button>
+      <button class="btn btn-secondary" onclick="switchView('catalog')">
+        🏪 Kembali ke Katalog Peminjaman
+      </button>
+    </div>
+    
+    <!-- NOTA PAPER RECEIPT -->
+    <div class="nota-paper">
+      <div class="nota-header">
+        <div style="display:flex;justify-content:center;align-items:center;gap:.75rem;margin-bottom:.5rem">
+          <img src="pecc_logo.jpg" style="width:36px;height:36px;border:2px solid var(--black);border-radius:4px" alt="PECC"/>
+          <img src="images/polines_logo.jpg" style="width:36px;height:36px;border:2px solid var(--black);border-radius:4px" alt="Polines"/>
+        </div>
+        <h2 style="font-family:'Space Grotesk',sans-serif;font-size:1.45rem;font-weight:900;text-transform:uppercase">
+          PECC INVENTORY
+        </h2>
+        <p style="font-weight:800;font-size:.85rem;color:var(--gray-600)">BUKTI RESERVASI PEMINJAMAN ALAT</p>
+        <div class="nota-id-badge">#${loan.id}</div>
+        <div style="margin-top:.4rem">
+          <span class="badge-pill yellow">STATUS: AKTIF / TERCATAT DI SPREADSHEET</span>
+        </div>
+      </div>
+      
+      <div class="nota-row">
+        <span class="label">Nama Peminjam:</span>
+        <span class="val">${loan.borrowerName}</span>
+      </div>
+      <div class="nota-row">
+        <span class="label">NIM / NIK:</span>
+        <span class="val">${loan.borrowerNIM}</span>
+      </div>
+      <div class="nota-row">
+        <span class="label">Jurusan / Organisasi:</span>
+        <span class="val">${loan.borrowerOrg}</span>
+      </div>
+      <div class="nota-row">
+        <span class="label">No. WhatsApp:</span>
+        <span class="val">${loan.borrowerPhone}</span>
+      </div>
+      <div class="nota-row">
+        <span class="label">Nama Kegiatan:</span>
+        <span class="val">${loan.eventName}</span>
+      </div>
+      <div class="nota-row">
+        <span class="label">Tanggal Pinjam:</span>
+        <span class="val">${fmtDate(loan.borrowDate)}</span>
+      </div>
+      <div class="nota-row">
+        <span class="label">Tanggal Kembali:</span>
+        <span class="val">${fmtDate(loan.returnDate)}</span>
+      </div>
+      <div class="nota-row">
+        <span class="label">Durasi Peminjaman:</span>
+        <span class="val">${loan.days} Hari</span>
+      </div>
+      
+      <div class="nota-items-summary">
+        <div style="font-family:'Space Grotesk',sans-serif;font-size:.82rem;font-weight:900;text-transform:uppercase;margin-bottom:.5rem">
+          Rincian Peralatan:
+        </div>
+        ${loan.items.map(i => `
+          <div style="display:flex;justify-content:space-between;padding:.3rem 0;font-size:.85rem;border-bottom:1px solid var(--gray-200)">
+            <span style="font-weight:800">${i.name} (x${i.qty} unit)</span>
+            <span style="font-weight:900">${fmt(i.price * i.qty)}/hr × ${loan.days}hr = ${fmt(i.price * i.qty * loan.days)}</span>
+          </div>
+        `).join('')}
+      </div>
+      
+      <div class="nota-total-box">
+        <span class="total-title">Total Biaya Sewa:</span>
+        <span class="total-val">${fmt(loan.totalPrice)}</span>
+      </div>
+      
+      <div style="margin-top:1.5rem;text-align:center;font-size:.78rem;font-weight:700;color:var(--gray-600);line-height:1.6">
+        Syarat & Ketentuan:<br/>
+        1. Harap menunjukkan nota ini dan KTM asli saat pengambilan alat di sekretariat PECC.<br/>
+        2. Keterlambatan pengembalian tanpa konfirmasi dikenakan denda sesuai tarif harian.<br/>
+        3. Peminjam bertanggung jawab penuh atas keutuhan dan kebersihan peralatan.<br/>
+        <br/>
+        Dicetak pada: ${new Date().toLocaleString('id-ID')}
+      </div>
+    </div>
+  `;
+  container.appendChild(wrap);
+}
+
+// ==========================================
+// VIEW: ADMIN PANEL
+// ==========================================
+function renderAdminView(container) {
+  if (!state.adminLoggedIn) {
+    const card = document.createElement('div');
+    card.className = 'form-header-card';
+    card.style.maxWidth = '460px';
+    card.style.margin = '2rem auto';
+    card.innerHTML = `
+      <div class="header-top-tag">PANEL ADMINISTRATOR</div>
+      <div class="header-logos">
+        <div class="header-logo-box"><img src="pecc_logo.jpg" alt="PECC"/></div>
+      </div>
+      <h2 style="font-family:'Space Grotesk',sans-serif;font-size:1.5rem;font-weight:900;text-transform:uppercase;margin-bottom:.5rem">
+        Login Admin PECC
+      </h2>
+      <p style="font-size:.85rem;font-weight:700;color:var(--gray-600);margin-bottom:1.5rem">
+        Masukkan akun untuk mengelola stok, status ketersediaan & integrasi Google Spreadsheet.
+      </p>
+      
+      <div class="form-group" style="text-align:left">
+        <label class="form-label">Username</label>
+        <input type="text" class="form-input" id="adm-user" placeholder="admin"/>
+      </div>
+      <div class="form-group" style="text-align:left">
+        <label class="form-label">Password</label>
+        <input type="password" class="form-input" id="adm-pass" placeholder="••••••••"/>
+      </div>
+      
+      <button class="btn btn-primary btn-full" style="margin-top:1rem" onclick="doAdminLogin()">
+        Masuk Dashboard Admin →
+      </button>
+      <div style="margin-top:.75rem;font-size:.8rem;font-weight:700;color:var(--gray-600)">
+        Default: <code>admin</code> / <code>admin123</code>
+      </div>
+    `;
+    container.appendChild(card);
+    return;
+  }
+  
+  const activeLoans = state.loans.filter(l => l.status === 'active');
+  const doneLoans = state.loans.filter(l => l.status === 'returned');
+  const totalUnits = state.items.reduce((s, i) => s + i.stock, 0);
+  
+  const adminWrap = document.createElement('div');
+  adminWrap.innerHTML = `
+    <!-- Top Header -->
+    <div style="display:flex;justify-content:space-between;align-items:center;flex-wrap:wrap;gap:1rem;margin-bottom:1.5rem">
+      <div>
+        <h2 style="font-family:'Space Grotesk',sans-serif;font-size:1.8rem;font-weight:900;text-transform:uppercase">
+          📊 Dashboard Admin PECC
+        </h2>
+        <p style="font-weight:700;color:var(--gray-600)">Kelola ketersediaan alat, stok, dan validasi peminjaman.</p>
+      </div>
+      <div style="display:flex;gap:.5rem">
+        <button class="btn btn-secondary" onclick="exportLoansCSV()">📥 Export Excel</button>
+        <button class="btn btn-danger" onclick="adminLogout()">Keluar</button>
+      </div>
+    </div>
+    
+    <!-- GOOGLE SPREADSHEET LIVE INTEGRATION CARD -->
+    <div class="form-section" style="background:#eff6ff;border-color:var(--pecc-blue)">
+      <div class="section-tag" style="background:var(--pecc-blue)">🔗 INTEGRASI GOOGLE SPREADSHEET & DRIVE</div>
+      <p style="font-size:.85rem;font-weight:700;color:var(--gray-600);margin-bottom:.85rem">
+        Hubungkan sistem ini ke Google Spreadsheet Anda untuk menyimpan data peminjaman & file bukti transfer secara otomatis ke Google Drive.
+      </p>
+      <div style="display:flex;gap:.75rem;align-items:flex-end;flex-wrap:wrap">
+        <div style="flex:1;min-width:280px">
+          <label class="form-label">Google Apps Script Web App URL</label>
+          <input 
+            type="url" 
+            class="form-input" 
+            id="cfg-sheets-url" 
+            value="${state.appsScriptUrl}" 
+            placeholder="https://script.google.com/macros/s/AKfycb.../exec"
+          />
+        </div>
+        <button class="btn btn-primary" onclick="saveSheetsUrl()">💾 Simpan URL</button>
+        <button class="btn btn-yellow" onclick="syncWithGoogleSheets(false)">🔄 Tarik Data (Sync)</button>
+        <button class="btn btn-secondary" onclick="openSheetsGuideModal()">📖 Panduan Setup</button>
+      </div>
+      <div style="margin-top:.85rem;display:flex;align-items:center;gap:.6rem;flex-wrap:wrap;font-size:.82rem;font-weight:800">
+        <span>Status Terhubung:</span>
+        <span class="badge-pill ${state.appsScriptUrl ? 'green' : 'yellow'}">
+          ${state.appsScriptUrl ? '🟢 Terhubung ke Google Spreadsheet' : '⚠️ Mode Lokal (Belum Terhubung)'}
+        </span>
+        ${state.isSyncing ? '<span style="color:var(--shopee-orange)">⏳ Sedang sinkronisasi...</span>' : ''}
+      </div>
+    </div>
+    
+    <!-- Stats Cards -->
+    <div style="display:grid;grid-template-columns:repeat(auto-fit, minmax(200px, 1fr));gap:1rem;margin-bottom:2rem">
+      <div style="background:var(--white);border:3px solid var(--black);border-radius:8px;padding:1.25rem;box-shadow:var(--shadow-sm)">
+        <div style="font-size:.78rem;font-weight:800;text-transform:uppercase;color:var(--gray-600)">Total Jenis Alat</div>
+        <div style="font-family:'Space Grotesk',sans-serif;font-size:2rem;font-weight:900">${state.items.length} Macam</div>
+      </div>
+      <div style="background:var(--white);border:3px solid var(--black);border-radius:8px;padding:1.25rem;box-shadow:var(--shadow-sm)">
+        <div style="font-size:.78rem;font-weight:800;text-transform:uppercase;color:var(--gray-600)">Total Unit Fisik</div>
+        <div style="font-family:'Space Grotesk',sans-serif;font-size:2rem;font-weight:900;color:var(--pecc-blue)">${totalUnits} Unit</div>
+      </div>
+      <div style="background:var(--white);border:3px solid var(--black);border-radius:8px;padding:1.25rem;box-shadow:var(--shadow-sm)">
+        <div style="font-size:.78rem;font-weight:800;text-transform:uppercase;color:var(--gray-600)">Sedang Dipinjam</div>
+        <div style="font-family:'Space Grotesk',sans-serif;font-size:2rem;font-weight:900;color:var(--shopee-orange)">${activeLoans.length} Transaksi</div>
+      </div>
+      <div style="background:var(--white);border:3px solid var(--black);border-radius:8px;padding:1.25rem;box-shadow:var(--shadow-sm)">
+        <div style="font-size:.78rem;font-weight:800;text-transform:uppercase;color:var(--gray-600)">Selesai Dikembalikan</div>
+        <div style="font-family:'Space Grotesk',sans-serif;font-size:2rem;font-weight:900;color:#15803d">${doneLoans.length} Transaksi</div>
+      </div>
+    </div>
+    
+    <!-- LOANS TABLE -->
+    <div class="form-section">
+      <div class="section-tag">📋 DATA TRANSAKSI PEMINJAMAN (${state.loans.length})</div>
+      <div style="overflow-x:auto">
+        <table class="cart-items-table">
+          <thead>
+            <tr>
+              <th>ID Nota</th>
+              <th>Peminjam</th>
+              <th>Alat Dipinjam</th>
+              <th>Jadwal</th>
+              <th>Total Biaya</th>
+              <th>Status</th>
+              <th>Bukti Bayar</th>
+              <th>Aksi</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${state.loans.map(l => `
+              <tr>
+                <td style="font-family:monospace;font-weight:900">#${l.id}</td>
+                <td>
+                  <strong>${l.borrowerName}</strong><br/>
+                  <small style="color:var(--gray-600)">${l.borrowerNIM} • ${l.borrowerPhone}</small>
+                </td>
+                <td>
+                  ${Array.isArray(l.items) ? l.items.map(it => `<div>• ${it.name} (x${it.qty})</div>`).join('') : (l.itemsSummary || '-')}
+                </td>
+                <td>
+                  ${fmtDate(l.borrowDate)} s/d ${fmtDate(l.returnDate)}<br/>
+                  <small style="color:var(--pecc-blue);font-weight:800">(${l.days} Hari)</small>
+                </td>
+                <td style="font-weight:900">${fmt(l.totalPrice)}</td>
+                <td>
+                  <span class="badge-pill ${l.status === 'active' ? 'yellow' : 'green'}">
+                    ${l.status === 'active' ? '🔄 Sedang Dipinjam' : '✅ Sudah Kembali'}
+                  </span>
+                </td>
+                <td>
+                  ${l.proofUrl && l.proofUrl.startsWith('http') ? `
+                    <a href="${l.proofUrl}" target="_blank" class="btn btn-secondary" style="padding:.25rem .5rem;font-size:.72rem">
+                      📂 Drive
+                    </a>
+                  ` : (l.proof && l.proof.startsWith('data:') ? `
+                    <button class="btn btn-secondary" style="padding:.25rem .5rem;font-size:.72rem" onclick="zoomQris('${l.proof}')">
+                      🖼️ Lihat
+                    </button>
+                  ` : '-')}
+                </td>
+                <td>
+                  <div style="display:flex;gap:.35rem">
+                    ${l.status === 'active' ? `
+                      <button class="btn btn-green" style="padding:.3rem .6rem;font-size:.75rem" onclick="markLoanReturned('${l.id}')" title="Kembalikan">
+                        ✅ Kembali
+                      </button>
+                    ` : ''}
+                    <button class="btn btn-secondary" style="padding:.3rem .6rem;font-size:.75rem" onclick="previewNotaById('${l.id}')">
+                      🧾 Nota
+                    </button>
+                  </div>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+    
+    <!-- ITEMS MANAGEMENT TABLE -->
+    <div class="form-section">
+      <div style="display:flex;justify-content:space-between;align-items:center;margin-bottom:1rem">
+        <div class="section-tag">📦 KELOLA STOK PERALATAN (${state.items.length})</div>
+        <button class="btn btn-primary" onclick="openItemEditModal()">+ Tambah Alat Baru</button>
+      </div>
+      <div style="overflow-x:auto">
+        <table class="cart-items-table">
+          <thead>
+            <tr>
+              <th>Foto</th>
+              <th>Nama Alat</th>
+              <th>Kategori</th>
+              <th>Tarif/Hari</th>
+              <th>Total Stok Fisik</th>
+              <th>Aksi</th>
+            </tr>
+          </thead>
+          <tbody>
+            ${state.items.map(it => `
+              <tr>
+                <td>
+                  <img src="${it.image || 'pecc_logo.jpg'}" style="width:44px;height:44px;border:2px solid var(--black);border-radius:4px;object-fit:contain"/>
+                </td>
+                <td>
+                  <strong>${it.name}</strong><br/>
+                  <small style="color:var(--gray-600)">${it.desc ? it.desc.slice(0, 45) + '...' : ''}</small>
+                </td>
+                <td><span class="badge-pill yellow">${it.categoryLabel || it.category}</span></td>
+                <td style="font-weight:900">${fmt(it.price)}/hr</td>
+                <td style="font-weight:900;color:var(--pecc-blue)">${it.stock} Unit</td>
+                <td>
+                  <div style="display:flex;gap:.35rem">
+                    <button class="btn btn-secondary" style="padding:.3rem .6rem;font-size:.75rem" onclick="openItemEditModal('${it.id}')">✏️ Edit</button>
+                    <button class="btn btn-danger" style="padding:.3rem .6rem;font-size:.75rem" onclick="deleteItem('${it.id}')">🗑️</button>
+                  </div>
+                </td>
+              </tr>
+            `).join('')}
+          </tbody>
+        </table>
+      </div>
+    </div>
+  `;
+  container.appendChild(adminWrap);
+}
+
+function saveSheetsUrl() {
+  const urlInp = document.getElementById('cfg-sheets-url');
+  if (!urlInp) return;
+  const val = urlInp.value.trim();
+  state.appsScriptUrl = val;
+  localStorage.setItem('pecc_event_apps_script_url', val);
+  toast('URL Google Spreadsheet berhasil disimpan!', 'success');
+  if (val) {
+    syncWithGoogleSheets(false);
+  }
+}
+
+function openSheetsGuideModal() {
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.onclick = e => { if (e.target === overlay) overlay.remove(); };
+  overlay.innerHTML = `
+    <div class="modal-container large">
+      <div class="modal-header">
+        <h3>📖 Panduan Menghubungkan Google Spreadsheet</h3>
+        <button class="modal-close-btn" onclick="this.closest('.modal-overlay').remove()">✕</button>
+      </div>
+      <div class="modal-body" style="line-height:1.7;font-size:.88rem">
+        <h4 style="font-family:'Space Grotesk',sans-serif;font-weight:900;margin-bottom:.5rem">Langkah Cepat (Hanya 2 Menit):</h4>
+        <ol style="padding-left:1.25rem;font-weight:700;color:var(--gray-600);margin-bottom:1.25rem">
+          <li>Buat Google Spreadsheet baru di Google Drive Anda.</li>
+          <li>Di menu Spreadsheet, klik <strong>Ekstensi (Extensions)</strong> &rarr; <strong>Apps Script</strong>.</li>
+          <li>Buka file <code>Code.gs</code> di folder proyek ini, salin seluruh isinya dan tempel ke Apps Script editor.</li>
+          <li>(Opsional) Buat folder di Google Drive untuk menyimpan file bukti transfer, lalu salin ID Foldernya ke variabel <code>DRIVE_FOLDER_ID</code>.</li>
+          <li>Klik tombol <strong>Deploy (Terapkan)</strong> di pojok kanan atas &rarr; pilih <strong>New deployment (Deployment baru)</strong>.</li>
+          <li>Pilih jenis <strong>Web app (Aplikasi web)</strong>:
+            <ul style="margin-top:.25rem">
+              <li>Execute as: <strong>Me (email Anda)</strong></li>
+              <li>Who has access: <strong>Anyone (Siapa saja)</strong> &larr; <em>Wajib dipilih agar website bisa mengirim data</em></li>
+            </ul>
+          </li>
+          <li>Klik <strong>Deploy</strong>, izinkan akses akun Google, lalu salin <strong>Web App URL</strong> yang berakhiran <code>/exec</code>.</li>
+          <li>Tempelkan Web App URL tersebut ke kotak input di dashboard ini lalu klik <strong>Simpan URL</strong>. Selesai! 🎉</li>
+        </ol>
+        <div style="background:#eff6ff;padding:.85rem;border-radius:6px;border:2px dashed var(--pecc-blue);font-weight:800">
+          💡 Setiap peminjam melakukan reservasi, baris baru beserta link bukti bayar Google Drive otomatis muncul di Google Spreadsheet Anda secara real-time!
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-primary" onclick="this.closest('.modal-overlay').remove()">Mengerti, Tutup Panduan</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+}
+
+function doAdminLogin() {
+  const u = document.getElementById('adm-user')?.value.trim();
+  const p = document.getElementById('adm-pass')?.value;
+  if (u === 'admin' && p === 'admin123') {
+    state.adminLoggedIn = true;
+    toast('Berhasil masuk sebagai Admin!', 'success');
+    render();
+  } else {
+    toast('Username atau password salah! (admin / admin123)', 'error');
+  }
+}
+
+function adminLogout() {
+  state.adminLoggedIn = false;
+  toast('Keluar dari mode admin.', 'info');
+  switchView('catalog');
+}
+
+async function markLoanReturned(id) {
+  const loan = state.loans.find(l => l.id === id);
+  if (!loan) return;
+  loan.status = 'returned';
+  saveLoans();
+  
+  if (state.appsScriptUrl) {
+    try {
+      fetch(state.appsScriptUrl, {
+        method: 'POST',
+        mode: 'no-cors',
+        headers: { 'Content-Type': 'text/plain' },
+        body: JSON.stringify({ action: 'markReturned', loanId: id })
+      });
+      toast(`Status #${id} diperbarui di Spreadsheet & lokal!`, 'success');
+    } catch (e) {
+      toast(`Status #${id} diperbarui (cache lokal)!`, 'success');
+    }
+  } else {
+    toast(`Peminjaman #${id} ditandai sudah kembali. Stok otomatis pulih!`, 'success');
+  }
+  render();
+}
+
+function previewNotaById(id) {
+  const loan = state.loans.find(l => l.id === id);
+  if (!loan) return;
+  state.currentNota = loan;
+  switchView('nota');
+}
+
+function exportLoansCSV() {
+  if (!state.loans.length) {
+    toast('Belum ada data peminjaman!', 'error');
+    return;
+  }
+  const headers = ['ID Nota', 'Peminjam', 'NIM', 'Organisasi', 'No WA', 'Acara', 'Tgl Pinjam', 'Tgl Kembali', 'Durasi', 'Total Biaya', 'Status'];
+  const rows = state.loans.map(l => [
+    l.id,
+    l.borrowerName,
+    l.borrowerNIM,
+    l.borrowerOrg,
+    l.borrowerPhone,
+    l.eventName,
+    l.borrowDate,
+    l.returnDate,
+    l.days + ' Hari',
+    l.totalPrice,
+    l.status === 'active' ? 'Dipinjam' : 'Dikembalikan'
+  ]);
+  const csv = '\uFEFF' + [headers, ...rows].map(r => r.map(c => `"${String(c).replace(/"/g, '""')}"`).join(',')).join('\n');
+  const blob = new Blob([csv], { type: 'text/csv;charset=utf-8;' });
+  const a = document.createElement('a');
+  a.href = URL.createObjectURL(blob);
+  a.download = `peminjaman-pecc-${getTodayStr()}.csv`;
+  a.click();
+  toast('Data berhasil diexport ke CSV / Excel!', 'success');
+}
+
+function openItemEditModal(id) {
+  const item = id ? state.items.find(i => i.id === id) : null;
+  const overlay = document.createElement('div');
+  overlay.className = 'modal-overlay';
+  overlay.id = 'item-edit-modal';
+  
+  overlay.innerHTML = `
+    <div class="modal-container">
+      <div class="modal-header">
+        <h3>${item ? '✏️ Edit Peralatan' : '➕ Tambah Peralatan Baru'}</h3>
+        <button class="modal-close-btn" onclick="this.closest('.modal-overlay').remove()">✕</button>
+      </div>
+      <div class="modal-body">
+        <div class="form-group">
+          <label class="form-label">Nama Alat <span class="req">*</span></label>
+          <input type="text" class="form-input" id="edit-name" value="${item ? item.name : ''}"/>
+        </div>
+        <div class="form-grid-2">
+          <div class="form-group">
+            <label class="form-label">Kategori</label>
+            <select class="form-select" id="edit-cat">
+              <option value="sound" ${item && item.category === 'sound' ? 'selected' : ''}>Sound & Audio</option>
+              <option value="tech" ${item && item.category === 'tech' ? 'selected' : ''}>Visual & Tech</option>
+              <option value="atribut" ${item && item.category === 'atribut' ? 'selected' : ''}>Atribut Acara</option>
+              <option value="dekorasi" ${item && item.category === 'dekorasi' ? 'selected' : ''}>Dekorasi Meja</option>
+            </select>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Badge Tag</label>
+            <input type="text" class="form-input" id="edit-tag" value="${item ? item.tag || '' : 'POPULER'}" placeholder="Contoh: BEST SELLER"/>
+          </div>
+        </div>
+        <div class="form-grid-2">
+          <div class="form-group">
+            <label class="form-label">Tarif Sewa/Hari (Rp) <span class="req">*</span></label>
+            <input type="number" class="form-input" id="edit-price" value="${item ? item.price : 10000}"/>
+          </div>
+          <div class="form-group">
+            <label class="form-label">Total Stok Fisik <span class="req">*</span></label>
+            <input type="number" class="form-input" id="edit-stock" value="${item ? item.stock : 5}"/>
+          </div>
+        </div>
+        <div class="form-group">
+          <label class="form-label">Deskripsi Alat</label>
+          <textarea class="form-input" id="edit-desc" rows="3">${item ? item.desc || '' : ''}</textarea>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button class="btn btn-secondary" onclick="this.closest('.modal-overlay').remove()">Batal</button>
+        <button class="btn btn-primary" onclick="saveItemData('${id || ''}')">💾 Simpan Peralatan</button>
+      </div>
+    </div>
+  `;
+  document.body.appendChild(overlay);
+}
+
+function saveItemData(id) {
+  const name = document.getElementById('edit-name')?.value.trim();
+  const cat = document.getElementById('edit-cat')?.value;
+  const tag = document.getElementById('edit-tag')?.value.trim();
+  const price = parseInt(document.getElementById('edit-price')?.value) || 0;
+  const stock = parseInt(document.getElementById('edit-stock')?.value) || 1;
+  const desc = document.getElementById('edit-desc')?.value.trim();
+  
+  if (!name || price <= 0) {
+    toast('Nama dan harga alat harus diisi!', 'error');
+    return;
+  }
+  
+  const catLabels = {
+    sound: 'Sound & Audio',
+    tech: 'Visual & Tech',
+    atribut: 'Atribut Acara',
+    dekorasi: 'Dekorasi Meja'
+  };
+  
+  if (id) {
+    const item = state.items.find(i => i.id === id);
+    if (item) {
+      item.name = name;
+      item.category = cat;
+      item.categoryLabel = catLabels[cat] || 'Alat Event';
+      item.tag = tag;
+      item.price = price;
+      item.stock = stock;
+      item.desc = desc;
+      toast('Alat berhasil diperbarui!', 'success');
+    }
+  } else {
+    state.items.push({
+      id: 'itm-' + Date.now(),
+      name,
+      category: cat,
+      categoryLabel: catLabels[cat] || 'Alat Event',
+      tag,
+      tagColor: 'yellow',
+      price,
+      stock,
+      desc,
+      available: true,
+      image: 'images/speaker.jpg'
+    });
+    toast('Alat baru berhasil ditambahkan!', 'success');
+  }
+  
+  saveItems();
+  document.getElementById('item-edit-modal')?.remove();
+  render();
+}
+
+function deleteItem(id) {
+  if (!confirm('Yakin ingin menghapus alat ini dari inventaris?')) return;
+  state.items = state.items.filter(i => i.id !== id);
+  saveItems();
+  toast('Alat berhasil dihapus!', 'info');
+  render();
+}
+
+// ==========================================
+// INITIALIZATION
+// ==========================================
+document.addEventListener('DOMContentLoaded', () => {
+  initData();
+  render();
+});
+
+if (document.readyState === 'interactive' || document.readyState === 'complete') {
+  initData();
+  render();
+}
