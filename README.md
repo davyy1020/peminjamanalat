@@ -62,7 +62,7 @@ Sistem ini sudah dilengkapi file backend [`Code.gs`](file:///c:/Users/Davy/Docum
    - Form data penanggung jawab, NIM, instansi, dan nama acara.
    - Pembayaran QRIS dengan modal zoom.
    - Bukti reservasi / Nota resmi dengan kode unik (`#NOTA-XXXX`) yang siap dicetak ke PDF.
-   - 1-Klik konfirmasi ke WhatsApp Admin (**Dito** & **Davy**).
+   - 1-Klik konfirmasi ke WhatsApp Admin (**Davy: 0882-1544-4940**).
 
 ---
 
